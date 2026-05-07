@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
@@ -31,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import android.content.Intent
+import coil.compose.AsyncImage
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -46,6 +48,7 @@ sealed class Screen(val route: String, val titleResId: Int, val icon: ImageVecto
 @Composable
 fun MainAppContent(userEmail: String, onLogout: () -> Unit) {
     var selectedScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+    var isSelectingAvatar by remember { mutableStateOf(false) }
     val focusViewModel: FocusViewModel = viewModel()
     val themeViewModel: ThemeViewModel = viewModel()
     
@@ -79,7 +82,7 @@ fun MainAppContent(userEmail: String, onLogout: () -> Unit) {
 
     Scaffold(
         topBar = {
-            if (selectedScreen != Screen.Groups) {
+            if (selectedScreen != Screen.Groups && !isSelectingAvatar) {
                 CenterAlignedTopAppBar(
                     title = { 
                         Text(
@@ -96,29 +99,31 @@ fun MainAppContent(userEmail: String, onLogout: () -> Unit) {
             }
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 0.dp
-            ) {
-                items.forEach { screen ->
-                    NavigationBarItem(
-                        icon = { Icon(screen.icon, contentDescription = stringResource(screen.titleResId)) },
-                        label = { Text(stringResource(screen.titleResId)) },
-                        selected = selectedScreen == screen,
-                        onClick = { selectedScreen = screen },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            indicatorColor = Color.Transparent
+            if (!isSelectingAvatar) {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp
+                ) {
+                    items.forEach { screen ->
+                        NavigationBarItem(
+                            icon = { Icon(screen.icon, contentDescription = stringResource(screen.titleResId)) },
+                            label = { Text(stringResource(screen.titleResId)) },
+                            selected = selectedScreen == screen,
+                            onClick = { selectedScreen = screen },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                indicatorColor = Color.Transparent
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
     ) { innerPadding ->
-        val modifier = if (selectedScreen == Screen.Groups) {
+        val modifier = if (selectedScreen == Screen.Groups || isSelectingAvatar) {
             Modifier.fillMaxSize().padding(bottom = innerPadding.calculateBottomPadding())
         } else {
             Modifier.fillMaxSize().padding(innerPadding)
@@ -128,11 +133,15 @@ fun MainAppContent(userEmail: String, onLogout: () -> Unit) {
             modifier = modifier.background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center
         ) {
-            when (selectedScreen) {
-                is Screen.Home -> HomeTabContent(userEmail)
-                is Screen.Focus -> FocusTabContent(focusViewModel)
-                is Screen.Groups -> GroupMainScreen(onBackToHome = { selectedScreen = Screen.Home })
-                is Screen.Settings -> SettingsTabContent(onLogout, themeViewModel)
+            if (isSelectingAvatar) {
+                AvatarSelectionScreen(onBack = { isSelectingAvatar = false })
+            } else {
+                when (selectedScreen) {
+                    is Screen.Home -> HomeTabContent(userEmail)
+                    is Screen.Focus -> FocusTabContent(focusViewModel)
+                    is Screen.Groups -> GroupMainScreen(onBackToHome = { selectedScreen = Screen.Home })
+                    is Screen.Settings -> SettingsTabContent(onLogout, themeViewModel, onNavigateToAvatar = { isSelectingAvatar = true })
+                }
             }
         }
     }
@@ -300,6 +309,7 @@ fun FocusTabContent(viewModel: FocusViewModel) {
 fun HomeTabContent(userEmail: String) {
     val loadingText = stringResource(R.string.loading)
     var username by remember { mutableStateOf(loadingText) }
+    var photoUrl by remember { mutableStateOf<String?>(null) }
     val uid = FirebaseAuth.getInstance().currentUser?.uid
 
     LaunchedEffect(uid) {
@@ -307,33 +317,103 @@ fun HomeTabContent(userEmail: String) {
             FirebaseFirestore.getInstance().collection("users").document(uid).get()
                 .addOnSuccessListener { doc ->
                     username = doc.getString("username") ?: "使用者"
+                    photoUrl = doc.getString("photoUrl")
                 }
         }
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (photoUrl != null) {
+            AsyncImage(
+                model = photoUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
         Text(text = stringResource(R.string.welcome_back, username), style = MaterialTheme.typography.headlineSmall)
         Text(text = userEmail, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
     }
 }
 
 @Composable
-fun SettingsTabContent(onLogout: () -> Unit, themeViewModel: ThemeViewModel) {
+fun SettingsTabContent(onLogout: () -> Unit, themeViewModel: ThemeViewModel, onNavigateToAvatar: () -> Unit) {
     val auth = FirebaseAuth.getInstance()
     val db = FirebaseFirestore.getInstance()
     val context = LocalContext.current
     val user = auth.currentUser
 
+    var username by remember { mutableStateOf("...") }
+    var photoUrl by remember { mutableStateOf<String?>(null) }
     var showNameDialog by remember { mutableStateOf(false) }
     var showPwdDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(user?.uid) {
+        if (user != null) {
+            db.collection("users").document(user.uid).addSnapshotListener { doc, _ ->
+                if (doc != null) {
+                    username = doc.getString("username") ?: "使用者"
+                    photoUrl = doc.getString("photoUrl")
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Top
     ) {
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 使用者資訊與頭貼
+        Box(contentAlignment = Alignment.Center) {
+            if (photoUrl != null) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = "頭貼",
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(CircleShape)
+                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(60.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(text = username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(text = user?.email ?: "", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+
         Spacer(modifier = Modifier.height(32.dp))
+
+        // 修改頭貼功能
+        OutlinedButton(
+            onClick = onNavigateToAvatar,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.PhotoCamera, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("修改頭貼")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // 修改暱稱按鈕
         OutlinedButton(

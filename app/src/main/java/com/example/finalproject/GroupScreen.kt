@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -39,7 +41,8 @@ data class Group(
 data class Member(
     val uid: String,
     val name: String,
-    val fcmToken: String?
+    val fcmToken: String?,
+    val photoUrl: String? = null
 )
 
 // 2. 群組導覽總管 (負責分發頁面)
@@ -227,7 +230,8 @@ fun GroupDetailScreen(
                         members.add(Member(
                             uid = doc.getString("uid") ?: "",
                             name = doc.getString("username") ?: context.getString(R.string.anonymous_member),
-                            fcmToken = doc.getString("fcmToken")
+                            fcmToken = doc.getString("fcmToken"),
+                            photoUrl = doc.getString("photoUrl")
                         ))
                     }
                     isLoading = false
@@ -295,8 +299,17 @@ fun GroupDetailScreen(
                             ListItem(
                                 headlineContent = { Text(member.name) },
                                 leadingContent = {
-                                    Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-                                        Text(member.name.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                                    if (member.photoUrl != null) {
+                                        AsyncImage(
+                                            model = member.photoUrl,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(40.dp).clip(CircleShape),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+                                            Text(member.name.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 },
                                 trailingContent = {
@@ -333,7 +346,7 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
     val db = FirebaseFirestore.getInstance()
     val context = LocalContext.current
     val members = remember { mutableStateListOf<Member>() }
-    val selectedMembers = remember { mutableStateListOf<String>() }
+    val selectedMembers = remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(group.id) {
@@ -347,7 +360,8 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
                         members.add(Member(
                             uid = doc.getString("uid") ?: "",
                             name = doc.getString("username") ?: context.getString(R.string.anonymous_member),
-                            fcmToken = doc.getString("fcmToken")
+                            fcmToken = doc.getString("fcmToken"),
+                            photoUrl = doc.getString("photoUrl")
                         ))
                     }
                     isLoading = false
@@ -356,7 +370,7 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
         }
     }
 
-    val isAllSelected = members.isNotEmpty() && selectedMembers.size == members.size
+    val isAllSelected = members.isNotEmpty() && selectedMembers.value.size == members.size
 
     Scaffold(
         topBar = {
@@ -371,8 +385,8 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
                         Checkbox(
                             checked = isAllSelected,
                             onCheckedChange = { checked ->
-                                selectedMembers.clear()
-                                if (checked) selectedMembers.addAll(members.map { it.uid })
+                                if (checked) selectedMembers.value = members.map { it.uid }
+                                else selectedMembers.value = emptyList()
                             }
                         )
                     }
@@ -386,21 +400,32 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
                 else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(members) { member ->
-                            val isSelected = selectedMembers.contains(member.uid)
+                            val isSelected = selectedMembers.value.contains(member.uid)
                             ListItem(
                                 headlineContent = { Text(member.name) },
                                 leadingContent = {
-                                    Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-                                        Text(member.name.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                                    if (member.photoUrl != null) {
+                                        AsyncImage(
+                                            model = member.photoUrl,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(40.dp).clip(CircleShape),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape), contentAlignment = Alignment.Center) {
+                                            Text(member.name.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 },
                                 trailingContent = {
-                                    Checkbox(checked = isSelected, onCheckedChange = {
-                                        if (it) selectedMembers.add(member.uid) else selectedMembers.remove(member.uid)
+                                    Checkbox(checked = isSelected, onCheckedChange = { checked ->
+                                        if (checked) selectedMembers.value = selectedMembers.value + member.uid
+                                        else selectedMembers.value = selectedMembers.value - member.uid
                                     })
                                 },
                                 modifier = Modifier.clickable {
-                                    if (isSelected) selectedMembers.remove(member.uid) else selectedMembers.add(member.uid)
+                                    if (isSelected) selectedMembers.value = selectedMembers.value - member.uid
+                                    else selectedMembers.value = selectedMembers.value + member.uid
                                 }
                             )
                             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
@@ -411,7 +436,7 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
 
             Button(
                 onClick = {
-                    if (selectedMembers.isEmpty()) {
+                    if (selectedMembers.value.isEmpty()) {
                         Toast.makeText(context, context.getString(R.string.select_at_least_one), Toast.LENGTH_SHORT).show()
                         return@Button
                     }
@@ -427,7 +452,7 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
                             "senderName" to realSenderName,
                             "groupId" to group.id,
                             "groupName" to group.name,
-                            "targetUids" to selectedMembers.toList(),
+                            "targetUids" to selectedMembers.value,
                             "timestamp" to FieldValue.serverTimestamp(),
                             "status" to "pending"
                         )
@@ -449,7 +474,7 @@ fun WakeUpCallScreen(group: Group, onBackClick: () -> Unit) {
             ) {
                 Icon(Icons.Default.Send, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.confirm_send, selectedMembers.size), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.confirm_send, selectedMembers.value.size), fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
