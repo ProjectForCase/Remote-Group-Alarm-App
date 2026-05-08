@@ -6,8 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -312,6 +314,13 @@ fun HomeTabContent(userEmail: String) {
     var photoUrl by remember { mutableStateOf<String?>(null) }
     val uid = FirebaseAuth.getInstance().currentUser?.uid
 
+    // Placeholder data (will be dynamic in future)
+    val todayHours = 0
+    val todayMinutes = 0
+    val weeklyTotalHours = 0
+    val weeklyTrends = listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f) // Mon to Sun
+    val categoryData = emptyList<Pair<String, Float>>() // Empty for now
+
     LaunchedEffect(uid) {
         if (uid != null) {
             FirebaseFirestore.getInstance().collection("users").document(uid).get()
@@ -322,21 +331,146 @@ fun HomeTabContent(userEmail: String) {
         }
     }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        if (photoUrl != null) {
-            AsyncImage(
-                model = photoUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
-                contentScale = ContentScale.Crop
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.Start
+    ) {
+        // 1. Greeting
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (photoUrl != null) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+            }
+            Text(
+                text = stringResource(R.string.hello_user, username),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(16.dp))
         }
-        Text(text = stringResource(R.string.welcome_back, username), style = MaterialTheme.typography.headlineSmall)
-        Text(text = userEmail, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 2. Today's Focus Duration Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (MaterialTheme.colorScheme.surface == Color.Black) Color(0xFF1A1A1A) else Color.White
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = stringResource(R.string.today_focus_duration),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "%02d : %02d".format(todayHours, todayMinutes),
+                    style = MaterialTheme.typography.displayLarge.copy(
+                        fontSize = 72.sp,
+                        fontWeight = FontWeight.W300,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // 3. Weekly Focus Trend
+        Text(
+            text = stringResource(R.string.weekly_focus_trend),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        WeeklyTrendChart(trends = weeklyTrends)
+        
+        Text(
+            text = stringResource(R.string.weekly_total, weeklyTotalHours),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.Gray,
+            modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // 4. Today's Category Stats
+        Text(
+            text = stringResource(R.string.today_category_stats),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (categoryData.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = stringResource(R.string.no_data_today), color = Color.Gray)
+            }
+        } else {
+            // Category Stats Chart logic would go here
+        }
+        
+        Spacer(modifier = Modifier.height(100.dp)) // Extra space for bottom nav
+    }
+}
+
+@Composable
+fun WeeklyTrendChart(trends: List<Float>) {
+    val days = listOf(
+        R.string.mon, R.string.tue, R.string.wed, R.string.thu, R.string.fri, R.string.sat, R.string.sun
+    )
+    val barColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(120.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        trends.forEachIndexed { index, value ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(16.dp)
+                        .fillMaxHeight(fraction = if (value <= 0.05f) 0.05f else value)
+                        .background(barColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = stringResource(days[index]), fontSize = 10.sp, color = Color.Gray)
+            }
+        }
     }
 }
 
