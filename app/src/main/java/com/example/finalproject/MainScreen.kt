@@ -1,5 +1,6 @@
 package com.example.finalproject
 
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -38,6 +39,8 @@ import coil.compose.AsyncImage
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import java.util.Calendar
 
 sealed class Screen(val route: String, val titleResId: Int, val icon: ImageVector) {
     object Home : Screen("home_tab", R.string.tab_home, Icons.Default.Home)
@@ -314,22 +317,117 @@ fun HomeTabContent(userEmail: String) {
     var photoUrl by remember { mutableStateOf<String?>(null) }
     val uid = FirebaseAuth.getInstance().currentUser?.uid
 
-    // Placeholder data (will be dynamic in future)
-    val todayHours = 0
-    val todayMinutes = 0
-    val weeklyTotalHours = 0
-    val weeklyTrends = listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f) // Mon to Sun
-    val categoryData = emptyList<Pair<String, Float>>() // Empty for now
+    // 動態數據狀態
+    var todayFocusSeconds by remember { mutableStateOf(0L) }
+    var weeklyTrends by remember { mutableStateOf(listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)) }
+    var weeklyTotalHours by remember { mutableStateOf(0) }
+    var categoryData by remember { mutableStateOf<List<Pair<String, Float>>>(emptyList()) }
 
-    LaunchedEffect(uid) {
+    DisposableEffect(uid) {
+        val db = FirebaseFirestore.getInstance()
+        var userListener: ListenerRegistration? = null
+        var recordsListener: ListenerRegistration? = null
+
         if (uid != null) {
-            FirebaseFirestore.getInstance().collection("users").document(uid).get()
-                .addOnSuccessListener { doc ->
+            // 1. 監聽個人資料
+            userListener = db.collection("users").document(uid).addSnapshotListener { doc, _ ->
+                if (doc != null && doc.exists()) {
                     username = doc.getString("username") ?: "使用者"
                     photoUrl = doc.getString("photoUrl")
                 }
+            }
+
+            // 2. 監聽專注紀錄 (使用 in-memory 過濾避免索引問題)
+            recordsListener = db.collection("focus_records")
+                .whereEqualTo("userId", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e("Firestore", "Error fetching records: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot == null) return@addSnapshotListener
+                    
+                    val allRecords = snapshot.documents
+                    Log.d("Firestore", "Fetched ${allRecords.size} records")
+
+                    val calendar = Calendar.getInstance()
+                    calendar.set(Calendar.HOUR_OF_DAY, 0)
+                    calendar.set(Calendar.MINUTE, 0)
+                    calendar.set(Calendar.SECOND, 0)
+                    calendar.set(Calendar.MILLISECOND, 0)
+                    val todayStart = calendar.time
+
+                    val weekCalendar = Calendar.getInstance()
+                    weekCalendar.time = todayStart
+                    // 將週日(1) 視為一週最後一天，計算週一(2)
+                    while (weekCalendar.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) {
+                        weekCalendar.add(Calendar.DAY_OF_YEAR, -1)
+                    }
+                    val weekStart = weekCalendar.time
+
+                    // 過濾紀錄
+                    val todayRecords = allRecords.filter { 
+                        val ts = it.getDate("timestamp")
+                        ts != null && ts >= todayStart
+                    }
+                    val weekRecords = allRecords.filter {
+                        val ts = it.getDate("timestamp")
+                        ts != null && ts >= weekStart
+                    }
+
+                    // 數據彙整
+                    todayFocusSeconds = todayRecords.sumOf { it.getLong("durationSeconds") ?: 0L }
+
+                    val weekData = MutableList(7) { 0L }
+                    weekRecords.forEach { doc ->
+                        val ts = doc.getDate("timestamp")
+                        if (ts != null) {
+                            val cal = Calendar.getInstance()
+                            cal.time = ts
+                            val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+                            val index = when (dayOfWeek) {
+                                Calendar.MONDAY -> 0
+                                Calendar.TUESDAY -> 1
+                                Calendar.WEDNESDAY -> 2
+                                Calendar.THURSDAY -> 3
+                                Calendar.FRIDAY -> 4
+                                Calendar.SATURDAY -> 5
+                                Calendar.SUNDAY -> 6
+                                else -> -1
+                            }
+                            if (index != -1) {
+                                weekData[index] += doc.getLong("durationSeconds") ?: 0L
+                            }
+                        }
+                    }
+                    
+                    val maxVal = weekData.maxOrNull()?.toFloat() ?: 0f
+                    weeklyTrends = weekData.map { if (maxVal > 0) it.toFloat() / maxVal else 0f }
+                    weeklyTotalHours = (weekData.sum() / 3600).toInt()
+
+                    val catMap = mutableMapOf<String, Long>()
+                    todayRecords.forEach { doc ->
+                        val type = doc.getString("type") ?: "其他"
+                        val dur = doc.getLong("durationSeconds") ?: 0L
+                        catMap[type] = catMap.getOrDefault(type, 0L) + dur
+                    }
+                    val totalToday = catMap.values.sum().toFloat()
+                    categoryData = if (totalToday > 0) {
+                        catMap.map { (type, dur) -> type to (dur.toFloat() / totalToday) }
+                    } else {
+                        emptyList()
+                    }
+                }
+        }
+
+        onDispose {
+            userListener?.remove()
+            recordsListener?.remove()
         }
     }
+
+    val todayHours = (todayFocusSeconds / 3600).toInt()
+    val todayMinutes = ((todayFocusSeconds % 3600) / 60).toInt()
 
     Column(
         modifier = Modifier
@@ -435,10 +533,44 @@ fun HomeTabContent(userEmail: String) {
                 Text(text = stringResource(R.string.no_data_today), color = Color.Gray)
             }
         } else {
-            // Category Stats Chart logic would go here
+            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                categoryData.forEach { (category, ratio) ->
+                    CategoryStatsRow(category = category, ratio = ratio)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
         }
         
-        Spacer(modifier = Modifier.height(100.dp)) // Extra space for bottom nav
+        Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+fun CategoryStatsRow(category: String, ratio: Float) {
+    val displayType = when(category) {
+        "工作" -> stringResource(R.string.cat_work)
+        "學習" -> stringResource(R.string.cat_study)
+        "運動" -> stringResource(R.string.cat_exercise)
+        "休息" -> stringResource(R.string.cat_rest)
+        "閱讀" -> stringResource(R.string.cat_read)
+        else -> category
+    }
+    
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(text = displayType, style = MaterialTheme.typography.bodyMedium)
+            Text(text = "${(ratio * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        LinearProgressIndicator(
+            progress = { ratio },
+            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+        )
     }
 }
 
@@ -452,23 +584,39 @@ fun WeeklyTrendChart(trends: List<Float>) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(120.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .height(140.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.Bottom
     ) {
         trends.forEachIndexed { index, value ->
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.Bottom
             ) {
+                // 長條圖部分，放在一個 weight(1f) 的 Box 中以確保標籤不會被擠出去
                 Box(
                     modifier = Modifier
-                        .width(16.dp)
-                        .fillMaxHeight(fraction = if (value <= 0.05f) 0.05f else value)
-                        .background(barColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                )
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(18.dp)
+                            .fillMaxHeight(fraction = if (value <= 0.05f) 0.05f else value)
+                            .background(barColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(text = stringResource(days[index]), fontSize = 10.sp, color = Color.Gray)
+                Text(
+                    text = stringResource(days[index]), 
+                    fontSize = 11.sp, 
+                    color = Color.Gray,
+                    maxLines = 1
+                )
             }
         }
     }
@@ -730,6 +878,7 @@ fun SettingsTabContent(onLogout: () -> Unit, themeViewModel: ThemeViewModel, onN
                             if (reAuthTask.isSuccessful) {
                                 user.updatePassword(newPwd).addOnSuccessListener {
                                     Toast.makeText(context, context.getString(R.string.update_success), Toast.LENGTH_SHORT).show()
+                                    photoUrl = null // 觸發頭貼重新整理(選用)
                                     showPwdDialog = false
                                 }.addOnFailureListener {
                                     Toast.makeText(context, "${context.getString(R.string.update_failed)}: ${it.message}", Toast.LENGTH_SHORT).show()
