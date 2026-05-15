@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                             "home" -> {
-                                MainAppContent(
+                                AppNavContainer(
                                     userEmail = auth.currentUser?.email ?: "使用者",
                                     onLogout = {
                                         auth.signOut()

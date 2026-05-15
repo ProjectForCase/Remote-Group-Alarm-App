@@ -1,0 +1,327 @@
+package com.example.finalproject
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import java.util.*
+import android.util.Log
+
+@Composable
+fun HomeTabContent(userEmail: String) {
+    val loadingText = stringResource(R.string.loading)
+    var username by remember { mutableStateOf(loadingText) }
+    var photoUrl by remember { mutableStateOf<String?>(null) }
+    val uid = FirebaseAuth.getInstance().currentUser?.uid
+
+    // 動態數據狀態
+    var todayFocusSeconds by remember { mutableStateOf(0L) }
+    var weeklyTrends by remember { mutableStateOf(listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)) }
+    var weeklyTotalHours by remember { mutableStateOf(0) }
+    var categoryData by remember { mutableStateOf<List<Pair<String, Float>>>(emptyList()) }
+
+    DisposableEffect(uid) {
+        val db = FirebaseFirestore.getInstance()
+        var userListener: ListenerRegistration? = null
+        var recordsListener: ListenerRegistration? = null
+
+        if (uid != null) {
+            userListener = db.collection("users").document(uid).addSnapshotListener { doc, _ ->
+                if (doc != null && doc.exists()) {
+                    username = doc.getString("username") ?: "使用者"
+                    photoUrl = doc.getString("photoUrl")
+                }
+            }
+
+            recordsListener = db.collection("focus_records")
+                .whereEqualTo("userId", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e("Firestore", "Error fetching records: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot == null) return@addSnapshotListener
+                    
+                    val allRecords = snapshot.documents
+                    val calendar = Calendar.getInstance()
+                    calendar.set(Calendar.HOUR_OF_DAY, 0)
+                    calendar.set(Calendar.MINUTE, 0)
+                    calendar.set(Calendar.SECOND, 0)
+                    calendar.set(Calendar.MILLISECOND, 0)
+                    val todayStart = calendar.time
+
+                    val weekCalendar = Calendar.getInstance()
+                    weekCalendar.time = todayStart
+                    while (weekCalendar.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) {
+                        weekCalendar.add(Calendar.DAY_OF_YEAR, -1)
+                    }
+                    val weekStart = weekCalendar.time
+
+                    val todayRecords = allRecords.filter { 
+                        val ts = it.getDate("timestamp")
+                        ts != null && ts >= todayStart
+                    }
+                    val weekRecords = allRecords.filter {
+                        val ts = it.getDate("timestamp")
+                        ts != null && ts >= weekStart
+                    }
+
+                    todayFocusSeconds = todayRecords.sumOf { it.getLong("durationSeconds") ?: 0L }
+
+                    val weekData = MutableList(7) { 0L }
+                    weekRecords.forEach { doc ->
+                        val ts = doc.getDate("timestamp")
+                        if (ts != null) {
+                            val cal = Calendar.getInstance()
+                            cal.time = ts
+                            val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+                            val index = when (dayOfWeek) {
+                                Calendar.MONDAY -> 0
+                                Calendar.TUESDAY -> 1
+                                Calendar.WEDNESDAY -> 2
+                                Calendar.THURSDAY -> 3
+                                Calendar.FRIDAY -> 4
+                                Calendar.SATURDAY -> 5
+                                Calendar.SUNDAY -> 6
+                                else -> -1
+                            }
+                            if (index != -1) {
+                                weekData[index] += doc.getLong("durationSeconds") ?: 0L
+                            }
+                        }
+                    }
+                    
+                    val maxVal = weekData.maxOrNull()?.toFloat() ?: 0f
+                    weeklyTrends = weekData.map { if (maxVal > 0) it.toFloat() / maxVal else 0f }
+                    weeklyTotalHours = (weekData.sum() / 3600).toInt()
+
+                    val catMap = mutableMapOf<String, Long>()
+                    todayRecords.forEach { doc ->
+                        val type = doc.getString("type") ?: "其他"
+                        val dur = doc.getLong("durationSeconds") ?: 0L
+                        catMap[type] = catMap.getOrDefault(type, 0L) + dur
+                    }
+                    val totalToday = catMap.values.sum().toFloat()
+                    categoryData = if (totalToday > 0) {
+                        catMap.map { (type, dur) -> type to (dur.toFloat() / totalToday) }
+                    } else {
+                        emptyList()
+                    }
+                }
+        }
+
+        onDispose {
+            userListener?.remove()
+            recordsListener?.remove()
+        }
+    }
+
+    val todayHours = (todayFocusSeconds / 3600).toInt()
+    val todayMinutes = ((todayFocusSeconds % 3600) / 60).toInt()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (photoUrl != null) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+            }
+            Text(
+                text = stringResource(R.string.hello_user, username),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (MaterialTheme.colorScheme.surface == Color.Black) Color(0xFF1A1A1A) else Color.White
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = stringResource(R.string.today_focus_duration),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "%02d : %02d".format(todayHours, todayMinutes),
+                    style = MaterialTheme.typography.displayLarge.copy(
+                        fontSize = 72.sp,
+                        fontWeight = FontWeight.W300,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = stringResource(R.string.weekly_focus_trend),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        WeeklyTrendChart(trends = weeklyTrends)
+        
+        Text(
+            text = stringResource(R.string.weekly_total, weeklyTotalHours),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.Gray,
+            modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Text(
+            text = stringResource(R.string.today_category_stats),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (categoryData.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = stringResource(R.string.no_data_today), color = Color.Gray)
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                categoryData.forEach { (category, ratio) ->
+                    CategoryStatsRow(category = category, ratio = ratio)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+fun CategoryStatsRow(category: String, ratio: Float) {
+    val displayType = when(category) {
+        "工作" -> stringResource(R.string.cat_work)
+        "學習" -> stringResource(R.string.cat_study)
+        "運動" -> stringResource(R.string.cat_exercise)
+        "休息" -> stringResource(R.string.cat_rest)
+        "閱讀" -> stringResource(R.string.cat_read)
+        else -> category
+    }
+    
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(text = displayType, style = MaterialTheme.typography.bodyMedium)
+            Text(text = "${(ratio * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        LinearProgressIndicator(
+            progress = { ratio },
+            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+        )
+    }
+}
+
+@Composable
+fun WeeklyTrendChart(trends: List<Float>) {
+    val days = listOf(
+        R.string.mon, R.string.tue, R.string.wed, R.string.thu, R.string.fri, R.string.sat, R.string.sun
+    )
+    val barColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(140.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        trends.forEachIndexed { index, value ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(18.dp)
+                            .fillMaxHeight(fraction = if (value <= 0.05f) 0.05f else value)
+                            .background(barColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(days[index]), 
+                    fontSize = 11.sp, 
+                    color = Color.Gray,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
