@@ -3,9 +3,12 @@ package com.example.finalproject
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -19,10 +22,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -154,161 +160,156 @@ fun MainAppContent(userEmail: String, onLogout: () -> Unit) {
 
 @Composable
 fun FocusTabContent(viewModel: FocusViewModel) {
-    var expanded by remember { mutableStateOf(false) }
     val options = listOf(
-        R.string.cat_work to "工作",
-        R.string.cat_study to "學習",
-        R.string.cat_exercise to "運動",
-        R.string.cat_rest to "休息",
-        R.string.cat_read to "閱讀"
+        FocusCategory(R.string.cat_work, "工作", Icons.Default.Assignment),
+        FocusCategory(R.string.cat_read, "閱讀", Icons.Default.MenuBook),
+        FocusCategory(R.string.cat_meditation, "冥想", Icons.Default.SelfImprovement),
+        FocusCategory(R.string.cat_study, "學習", Icons.Default.School),
+        FocusCategory(R.string.cat_exercise, "運動", Icons.Default.FitnessCenter),
+        FocusCategory(R.string.cat_rest, "休息", Icons.Default.Bedtime)
     )
-    val mainColor = MaterialTheme.colorScheme.primary
+    val mainColor = Color(0xFF673AB7) // 紫色基調
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 32.dp, vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        // 1. 標籤式切換
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(BorderStroke(1.dp, Color.LightGray), RoundedCornerShape(12.dp))
-                .clickable(enabled = !viewModel.isRunning && viewModel.timerSeconds == 0) { expanded = true }
-                .padding(16.dp)
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            options.forEach { category ->
+                val isSelected = viewModel.selectedType == category.internalName
                 val isInteractionDisabled = viewModel.isRunning || viewModel.timerSeconds > 0
-                val currentDisplayType = when(viewModel.selectedType) {
-                    "工作" -> stringResource(R.string.cat_work)
-                    "學習" -> stringResource(R.string.cat_study)
-                    "運動" -> stringResource(R.string.cat_exercise)
-                    "休息" -> stringResource(R.string.cat_rest)
-                    "閱讀" -> stringResource(R.string.cat_read)
-                    else -> viewModel.selectedType
-                }
-                Text(
-                    text = currentDisplayType,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (isInteractionDisabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurface
-                )
-                Icon(
-                    Icons.Default.ArrowDropDown, 
-                    contentDescription = null, 
-                    tint = if (isInteractionDisabled) Color.Gray.copy(alpha = 0.38f) else Color.Gray
-                )
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { (resId, internalName) ->
-                    DropdownMenuItem(text = { Text(stringResource(resId)) }, onClick = {
-                        viewModel.onTypeChange(internalName)
-                        expanded = false
-                    })
+                
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable(enabled = !isInteractionDisabled) {
+                            viewModel.onTypeChange(category.internalName)
+                        },
+                    color = if (isSelected) mainColor else Color.Transparent,
+                    border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = category.icon,
+                            contentDescription = null,
+                            tint = if (isSelected) Color.White else Color.Gray,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(category.titleRes),
+                            color = if (isSelected) Color.White else Color.Gray,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
                 }
             }
         }
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(modifier = Modifier.weight(1f))
+
+        // 2. 圓形計時器區域
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(300.dp)
+        ) {
+            // 背景圓環
+            Canvas(modifier = Modifier.size(280.dp)) {
+                drawCircle(
+                    color = mainColor.copy(alpha = 0.1f),
+                    style = Stroke(width = 8.dp.toPx())
+                )
+            }
+            
+            // 進度圓環
+            Canvas(modifier = Modifier.size(280.dp)) {
+                drawArc(
+                    color = mainColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f * (viewModel.timerSeconds % 60 / 60f), 
+                    useCenter = false,
+                    style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
+
             Text(
                 text = viewModel.formatTime(viewModel.timerSeconds),
-                fontSize = 88.sp,
+                fontSize = 80.sp,
                 fontWeight = FontWeight.W200,
-                fontFamily = FontFamily.Monospace
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface
             )
-            Box(modifier = Modifier.width(60.dp).height(2.dp).background(mainColor.copy(alpha = 0.3f)))
         }
 
-        // 3. 按鈕區域
+        Spacer(modifier = Modifier.weight(1f))
+
+        // 3. 控制按鈕
         if (viewModel.isRunning) {
-            // 執行中：顯示 STOP 鍵
-            Surface(
+            Button(
+                onClick = { viewModel.toggleTimer() },
                 modifier = Modifier
-                    .size(180.dp)
-                    .clip(CircleShape)
-                    .clickable { viewModel.toggleTimer() },
-                color = Color.Red
+                    .width(120.dp)
+                    .height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f))
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "STOP",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp,
-                        color = Color.White
-                    )
-                }
+                Text("STOP", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
         } else if (viewModel.timerSeconds > 0) {
-            // 暫停中：顯示 CONTINUE 與 COMPLETE 鍵
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // CONTINUE 鍵
-                Surface(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(CircleShape)
-                        .clickable { viewModel.startTimer() },
-                    color = mainColor
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(
+                    onClick = { viewModel.startTimer() },
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.height(56.dp)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "CONTINUE",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
+                    Text("CONTINUE")
                 }
-
-                // COMPLETE 鍵
-                Surface(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(CircleShape)
-                        .clickable { viewModel.completeTimer() },
-                    color = Color.Gray // 使用灰色或另一個顏色區分
+                Button(
+                    onClick = { viewModel.completeTimer() },
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "COMPLETE",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
+                    Text("FINISH")
                 }
             }
         } else {
-            // 未開始：顯示 START 鍵
-            Surface(
+            Button(
+                onClick = { viewModel.toggleTimer() },
                 modifier = Modifier
-                    .size(180.dp)
-                    .clip(CircleShape)
-                    .clickable { viewModel.toggleTimer() },
-                color = mainColor
+                    .width(150.dp)
+                    .height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = mainColor.copy(alpha = 0.2f), contentColor = mainColor)
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "START",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp,
-                        color = Color.White
-                    )
-                }
+                Text("START", fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             }
         }
-        Spacer(modifier = Modifier.height(20.dp))
+        
+        Spacer(modifier = Modifier.height(48.dp))
     }
 }
+
+data class FocusCategory(
+    val titleRes: Int,
+    val internalName: String,
+    val icon: ImageVector
+)
 
 @Composable
 fun HomeTabContent(userEmail: String) {
