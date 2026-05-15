@@ -87,6 +87,7 @@
     <string name="cat_exercise">運動</string>
     <string name="cat_rest">休息</string>
     <string name="cat_read">閱讀</string>
+    <string name="cat_meditation">冥想</string>
     <string name="focus_history">專注歷史紀錄</string>
     <string name="no_history">尚無專注紀錄</string>
     <string name="duration_format">%1$d 分 %2$d 秒</string>

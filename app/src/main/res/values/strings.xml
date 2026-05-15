@@ -87,6 +87,7 @@
     <string name="cat_exercise">Exercise</string>
     <string name="cat_rest">Rest</string>
     <string name="cat_read">Read</string>
+    <string name="cat_meditation">Meditation</string>
     <string name="focus_history">Focus History</string>
     <string name="no_history">No focus history yet</string>
     <string name="duration_format">%1$d m %2$d s</string>
