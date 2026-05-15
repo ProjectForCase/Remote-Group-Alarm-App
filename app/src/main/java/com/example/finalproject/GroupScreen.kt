@@ -1,5 +1,13 @@
 package com.example.finalproject
 
+import android.app.AlarmManager
+import android.app.DatePickerDialog
+import android.app.PendingIntent
+import android.app.TimePickerDialog
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +37,10 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 // 1. 資料結構 (Data Class)
 data class Group(
@@ -45,12 +57,23 @@ data class Member(
     val photoUrl: String? = null
 )
 
+data class ScheduledGroupAlarm(
+    val alarmId: String,
+    val groupName: String,
+    val hour: Int,
+    val minute: Int,
+    val scheduledAtMillis: Long,
+    val repeatDays: List<Int> = emptyList(),
+    val targetUids: List<String> = emptyList()
+)
+
 // 2. 群組導覽總管 (負責分發頁面)
 @Composable
 fun GroupMainScreen(onBackToHome: () -> Unit) {
     var selectedGroup by remember { mutableStateOf<Group?>(null) }
     var showWakeUpScreen by remember { mutableStateOf(false) }
     var showLeaderboard by remember { mutableStateOf(false) } // 👇 控制排行榜畫面顯示
+    var showGroupAlarmsScreen by remember { mutableStateOf(false) }
 
     when {
         selectedGroup == null -> {
@@ -72,12 +95,19 @@ fun GroupMainScreen(onBackToHome: () -> Unit) {
                 onBackClick = { showLeaderboard = false }
             )
         }
+        showGroupAlarmsScreen -> {
+            GroupAlarmScreen(
+                group = selectedGroup!!,
+                onBackClick = { showGroupAlarmsScreen = false }
+            )
+        }
         else -> {
             GroupDetailScreen(
                 group = selectedGroup!!,
                 onBackClick = { selectedGroup = null },
                 onWakeUpClick = { showWakeUpScreen = true },
-                onLeaderboardClick = { showLeaderboard = true } // 👇 傳入點擊事件
+                onLeaderboardClick = { showLeaderboard = true }, // 👇 傳入點擊事件
+                onSetGroupAlarmClick = { showGroupAlarmsScreen = true }
             )
         }
     }
@@ -211,7 +241,8 @@ fun GroupDetailScreen(
     group: Group,
     onBackClick: () -> Unit,
     onWakeUpClick: () -> Unit,
-    onLeaderboardClick: () -> Unit // 👇 排行榜點擊回呼
+    onLeaderboardClick: () -> Unit, // 👇 排行榜點擊回呼
+    onSetGroupAlarmClick: () -> Unit
 ) {
     val db = FirebaseFirestore.getInstance()
     val context = LocalContext.current
@@ -274,6 +305,17 @@ fun GroupDetailScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = onSetGroupAlarmClick,
+                modifier = Modifier.fillMaxWidth().height(56.dp).padding(bottom = 8.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))
+            ) {
+                Icon(Icons.Default.Alarm, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.set_group_alarm), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
 
             // 👇 新增：排行榜進入按鈕
             Button(
@@ -491,6 +533,474 @@ fun CreateGroupDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
         confirmButton = { Button(onClick = { if(name.isNotEmpty()) onCreate(name) }) { Text(stringResource(R.string.create)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupAlarmScreen(group: Group, onBackClick: () -> Unit) {
+    val context = LocalContext.current
+    val db = FirebaseFirestore.getInstance()
+    val uid = FirebaseAuth.getInstance().currentUser?.uid
+    val alarms = remember { mutableStateListOf<ScheduledGroupAlarm>() }
+    var isLoading by remember { mutableStateOf(true) }
+    var showAddDialog by remember { mutableStateOf(false) }
+
+    DisposableEffect(group.id, uid) {
+        var listener: ListenerRegistration? = null
+        if (uid != null) {
+            listener = db.collection("groupAlarms")
+                .whereEqualTo("groupId", group.id)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        isLoading = false
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.group_alarm_load_failed, error.message ?: ""),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@addSnapshotListener
+                    }
+
+                    alarms.clear()
+                    snapshot?.documents
+                        ?.filter { doc ->
+                            doc.getString("createdBy") == uid && doc.getString("status") == "scheduled"
+                        }
+                        ?.mapNotNull { doc ->
+                            val alarmId = doc.getString("alarmId") ?: doc.id
+                            val hour = doc.getLong("hour")?.toInt() ?: return@mapNotNull null
+                            val minute = doc.getLong("minute")?.toInt() ?: return@mapNotNull null
+                            val scheduledAtMillis = doc.getLong("scheduledAtMillis") ?: 0L
+                            val repeatDays = (doc.get("repeatDays") as? List<*>)
+                                ?.mapNotNull { (it as? Number)?.toInt() }
+                                .orEmpty()
+                            val targetUids = (doc.get("targetUids") as? List<*>)
+                                ?.mapNotNull { it as? String }
+                                .orEmpty()
+                            ScheduledGroupAlarm(
+                                alarmId = alarmId,
+                                groupName = doc.getString("groupName") ?: group.name,
+                                hour = hour,
+                                minute = minute,
+                                scheduledAtMillis = scheduledAtMillis,
+                                repeatDays = repeatDays,
+                                targetUids = targetUids
+                            )
+                        }
+                        ?.sortedBy { it.scheduledAtMillis }
+                        ?.let { alarms.addAll(it) }
+                    isLoading = false
+                }
+        } else {
+            isLoading = false
+        }
+        onDispose { listener?.remove() }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.group_alarms), fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cancel))
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showAddDialog = true }) {
+                Icon(Icons.Default.AddAlarm, contentDescription = stringResource(R.string.add_group_alarm))
+            }
+        }
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp)) {
+            when {
+                isLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                alarms.isEmpty() -> {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(Icons.Default.AlarmOff, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color.Gray)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(stringResource(R.string.no_group_alarms), color = Color.Gray)
+                    }
+                }
+                else -> {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(alarms, key = { it.alarmId }) { alarm ->
+                            GroupAlarmCard(
+                                alarm = alarm,
+                                onDelete = {
+                                    cancelGroupAlarm(context, alarm.alarmId)
+                                    db.collection("groupAlarms").document(alarm.alarmId)
+                                        .update(
+                                            mapOf(
+                                                "status" to "cancelled",
+                                                "cancelledAt" to FieldValue.serverTimestamp()
+                                            )
+                                        )
+                                        .addOnSuccessListener {
+                                            Toast.makeText(context, context.getString(R.string.group_alarm_deleted), Toast.LENGTH_SHORT).show()
+                                        }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showAddDialog) {
+            GroupAlarmDialog(
+                group = group,
+                onDismiss = { showAddDialog = false }
+            )
+        }
+    }
+}
+
+@Composable
+fun GroupAlarmCard(alarm: ScheduledGroupAlarm, onDelete: () -> Unit) {
+    val timeText = String.format(Locale.getDefault(), "%02d:%02d", alarm.hour, alarm.minute)
+    val nextText = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(alarm.scheduledAtMillis))
+    val weekdayLabels = mapOf(
+        Calendar.MONDAY to stringResource(R.string.weekday_monday),
+        Calendar.TUESDAY to stringResource(R.string.weekday_tuesday),
+        Calendar.WEDNESDAY to stringResource(R.string.weekday_wednesday),
+        Calendar.THURSDAY to stringResource(R.string.weekday_thursday),
+        Calendar.FRIDAY to stringResource(R.string.weekday_friday),
+        Calendar.SATURDAY to stringResource(R.string.weekday_saturday),
+        Calendar.SUNDAY to stringResource(R.string.weekday_sunday)
+    )
+    val repeatText = if (alarm.repeatDays.isEmpty()) {
+        stringResource(R.string.once_alarm)
+    } else {
+        alarm.repeatDays.sorted().joinToString(" ") { weekdayLabels[it].orEmpty() }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(timeText, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                Text(repeatText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.next_alarm_time, nextText), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(stringResource(R.string.call_member_count, alarm.targetUids.size), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_alarm), tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupAlarmDialog(group: Group, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val db = FirebaseFirestore.getInstance()
+    val calendar = remember { Calendar.getInstance().apply { add(Calendar.MINUTE, 5) } }
+    var selectedTimeMillis by remember { mutableStateOf(calendar.timeInMillis) }
+    var repeatDays by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var isScheduling by remember { mutableStateOf(false) }
+    val dateFormatter = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()) }
+
+    fun refreshSelectedTime() {
+        selectedTimeMillis = calendar.timeInMillis
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!isScheduling) onDismiss() },
+        title = { Text(stringResource(R.string.set_group_alarm)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.group_alarm_description, group.memberCount),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = dateFormatter.format(Date(selectedTimeMillis)),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            DatePickerDialog(
+                                context,
+                                { _, year, month, dayOfMonth ->
+                                    calendar.set(Calendar.YEAR, year)
+                                    calendar.set(Calendar.MONTH, month)
+                                    calendar.set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                    refreshSelectedTime()
+                                },
+                                calendar.get(Calendar.YEAR),
+                                calendar.get(Calendar.MONTH),
+                                calendar.get(Calendar.DAY_OF_MONTH)
+                            ).show()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.DateRange, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(stringResource(R.string.choose_date))
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            TimePickerDialog(
+                                context,
+                                { _, hourOfDay, minute ->
+                                    calendar.set(Calendar.HOUR_OF_DAY, hourOfDay)
+                                    calendar.set(Calendar.MINUTE, minute)
+                                    calendar.set(Calendar.SECOND, 0)
+                                    calendar.set(Calendar.MILLISECOND, 0)
+                                    refreshSelectedTime()
+                                },
+                                calendar.get(Calendar.HOUR_OF_DAY),
+                                calendar.get(Calendar.MINUTE),
+                                true
+                            ).show()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Schedule, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(stringResource(R.string.choose_time))
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(stringResource(R.string.repeat_weekdays), fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                WeekdaySelector(
+                    selectedDays = repeatDays,
+                    onToggleDay = { day ->
+                        repeatDays = if (repeatDays.contains(day)) {
+                            repeatDays - day
+                        } else {
+                            (repeatDays + day).sorted()
+                        }
+                    }
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !isScheduling,
+                onClick = {
+                    val uid = FirebaseAuth.getInstance().currentUser?.uid
+                    if (uid == null) {
+                        Toast.makeText(context, context.getString(R.string.auth_failed), Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (group.memberIds.isEmpty()) {
+                        Toast.makeText(context, context.getString(R.string.no_members_to_call), Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+
+                    isScheduling = true
+                    db.collection("users").document(uid).get()
+                        .addOnSuccessListener { userDoc ->
+                            val senderName = userDoc.getString("username") ?: context.getString(R.string.group_member)
+                            val alarmId = db.collection("groupAlarms").document().id
+                            val triggerAtMillis = calculateNextAlarmTime(selectedTimeMillis, repeatDays)
+                            val scheduled = scheduleGroupAlarm(
+                                context = context,
+                                group = group,
+                                senderId = uid,
+                                senderName = senderName,
+                                triggerAtMillis = triggerAtMillis,
+                                alarmId = alarmId,
+                                repeatDays = repeatDays
+                            )
+
+                            if (scheduled) {
+                                val alarmData = hashMapOf(
+                                    "alarmId" to alarmId,
+                                    "createdBy" to uid,
+                                    "senderName" to senderName,
+                                    "groupId" to group.id,
+                                    "groupName" to group.name,
+                                    "targetUids" to group.memberIds,
+                                    "hour" to calendar.get(Calendar.HOUR_OF_DAY),
+                                    "minute" to calendar.get(Calendar.MINUTE),
+                                    "repeatDays" to repeatDays,
+                                    "scheduledAtMillis" to triggerAtMillis,
+                                    "scheduledAt" to Date(triggerAtMillis),
+                                    "status" to "scheduled",
+                                    "createdAt" to FieldValue.serverTimestamp()
+                                )
+                                db.collection("groupAlarms").document(alarmId).set(alarmData)
+                                    .addOnSuccessListener {
+                                        isScheduling = false
+                                        Toast.makeText(context, context.getString(R.string.group_alarm_scheduled), Toast.LENGTH_SHORT).show()
+                                        onDismiss()
+                                    }
+                                    .addOnFailureListener { e ->
+                                        cancelGroupAlarm(context, alarmId)
+                                        isScheduling = false
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.group_alarm_schedule_failed, e.message ?: ""),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            } else {
+                                isScheduling = false
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            isScheduling = false
+                            Toast.makeText(context, context.getString(R.string.group_alarm_schedule_failed, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                        }
+                }
+            ) {
+                Text(stringResource(R.string.schedule_alarm))
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !isScheduling, onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+fun WeekdaySelector(selectedDays: List<Int>, onToggleDay: (Int) -> Unit) {
+    val days = listOf(
+        Calendar.MONDAY,
+        Calendar.TUESDAY,
+        Calendar.WEDNESDAY,
+        Calendar.THURSDAY,
+        Calendar.FRIDAY,
+        Calendar.SATURDAY,
+        Calendar.SUNDAY
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        days.chunked(4).forEach { rowDays ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowDays.forEach { day ->
+                    FilterChip(
+                        selected = selectedDays.contains(day),
+                        onClick = { onToggleDay(day) },
+                        label = { Text(weekdayLabel(day)) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun weekdayLabel(day: Int): String {
+    return when (day) {
+        Calendar.MONDAY -> stringResource(R.string.weekday_monday)
+        Calendar.TUESDAY -> stringResource(R.string.weekday_tuesday)
+        Calendar.WEDNESDAY -> stringResource(R.string.weekday_wednesday)
+        Calendar.THURSDAY -> stringResource(R.string.weekday_thursday)
+        Calendar.FRIDAY -> stringResource(R.string.weekday_friday)
+        Calendar.SATURDAY -> stringResource(R.string.weekday_saturday)
+        Calendar.SUNDAY -> stringResource(R.string.weekday_sunday)
+        else -> ""
+    }
+}
+
+private fun calculateNextAlarmTime(selectedTimeMillis: Long, repeatDays: List<Int>): Long {
+    val selected = Calendar.getInstance().apply {
+        timeInMillis = selectedTimeMillis
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+
+    if (repeatDays.isEmpty()) {
+        return selected.timeInMillis
+    }
+
+    val now = Calendar.getInstance()
+    return repeatDays.map { day ->
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, selected.get(Calendar.HOUR_OF_DAY))
+            set(Calendar.MINUTE, selected.get(Calendar.MINUTE))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            set(Calendar.DAY_OF_WEEK, day)
+            if (!after(now)) {
+                add(Calendar.WEEK_OF_YEAR, 1)
+            }
+        }.timeInMillis
+    }.minOrNull() ?: selected.timeInMillis
+}
+
+private fun scheduleGroupAlarm(
+    context: Context,
+    group: Group,
+    senderId: String,
+    senderName: String,
+    triggerAtMillis: Long,
+    alarmId: String,
+    repeatDays: List<Int> = emptyList()
+): Boolean {
+    if (triggerAtMillis <= System.currentTimeMillis()) {
+        Toast.makeText(context, context.getString(R.string.group_alarm_time_in_past), Toast.LENGTH_SHORT).show()
+        return false
+    }
+
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+        Toast.makeText(context, context.getString(R.string.exact_alarm_permission_needed), Toast.LENGTH_LONG).show()
+        context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return false
+    }
+
+    val intent = Intent(context, GroupAlarmReceiver::class.java).apply {
+        putExtra(GroupAlarmReceiver.EXTRA_ALARM_ID, alarmId)
+        putExtra(GroupAlarmReceiver.EXTRA_SENDER_ID, senderId)
+        putExtra(GroupAlarmReceiver.EXTRA_SENDER_NAME, senderName)
+        putExtra(GroupAlarmReceiver.EXTRA_GROUP_ID, group.id)
+        putExtra(GroupAlarmReceiver.EXTRA_GROUP_NAME, group.name)
+        putExtra(GroupAlarmReceiver.EXTRA_HOUR, Calendar.getInstance().apply { timeInMillis = triggerAtMillis }.get(Calendar.HOUR_OF_DAY))
+        putExtra(GroupAlarmReceiver.EXTRA_MINUTE, Calendar.getInstance().apply { timeInMillis = triggerAtMillis }.get(Calendar.MINUTE))
+        putStringArrayListExtra(GroupAlarmReceiver.EXTRA_TARGET_UIDS, ArrayList(group.memberIds))
+        putIntegerArrayListExtra(GroupAlarmReceiver.EXTRA_REPEAT_DAYS, ArrayList(repeatDays))
+    }
+    val pendingIntent = PendingIntent.getBroadcast(
+        context,
+        alarmId.hashCode(),
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+    } else {
+        alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+    }
+    return true
+}
+
+private fun cancelGroupAlarm(context: Context, alarmId: String) {
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val pendingIntent = PendingIntent.getBroadcast(
+        context,
+        alarmId.hashCode(),
+        Intent(context, GroupAlarmReceiver::class.java),
+        PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+    )
+    if (pendingIntent != null) {
+        alarmManager.cancel(pendingIntent)
+        pendingIntent.cancel()
+    }
 }
 
 @Composable
