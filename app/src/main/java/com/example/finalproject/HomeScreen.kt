@@ -25,6 +25,14 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import java.util.*
 import android.util.Log
+import java.text.SimpleDateFormat
+
+data class FocusRecord(
+    val id: String = "",
+    val type: String = "",
+    val durationSeconds: Long = 0,
+    val timestamp: Date? = null
+)
 
 @Composable
 fun HomeTabContent(userEmail: String) {
@@ -38,6 +46,7 @@ fun HomeTabContent(userEmail: String) {
     var weeklyTrends by remember { mutableStateOf(listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)) }
     var weeklyTotalHours by remember { mutableStateOf(0) }
     var categoryData by remember { mutableStateOf<List<Pair<String, Float>>>(emptyList()) }
+    var lastSevenDaysRecords by remember { mutableStateOf<List<FocusRecord>>(emptyList()) }
 
     DisposableEffect(uid) {
         val db = FirebaseFirestore.getInstance()
@@ -62,6 +71,22 @@ fun HomeTabContent(userEmail: String) {
                     if (snapshot == null) return@addSnapshotListener
                     
                     val allRecords = snapshot.documents
+                    
+                    // 取得近七天的紀錄
+                    val calendar7 = Calendar.getInstance()
+                    calendar7.add(Calendar.DAY_OF_YEAR, -7)
+                    calendar7.set(Calendar.HOUR_OF_DAY, 0)
+                    calendar7.set(Calendar.MINUTE, 0)
+                    calendar7.set(Calendar.SECOND, 0)
+                    calendar7.set(Calendar.MILLISECOND, 0)
+                    val sevenDaysAgo = calendar7.time
+
+                    lastSevenDaysRecords = allRecords.mapNotNull { doc ->
+                        val record = doc.toObject(FocusRecord::class.java)
+                        record?.copy(id = doc.id)
+                    }.filter { it.timestamp != null && it.timestamp >= sevenDaysAgo }
+                     .sortedByDescending { it.timestamp }
+
                     val calendar = Calendar.getInstance()
                     calendar.set(Calendar.HOUR_OF_DAY, 0)
                     calendar.set(Calendar.MINUTE, 0)
@@ -245,8 +270,84 @@ fun HomeTabContent(userEmail: String) {
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // 專注歷史紀錄部分 (近七天)
+        Text(
+            text = stringResource(R.string.focus_history),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (lastSevenDaysRecords.isEmpty()) {
+            Text(
+                text = stringResource(R.string.no_history),
+                color = Color.Gray,
+                modifier = Modifier.padding(8.dp)
+            )
+        } else {
+            lastSevenDaysRecords.forEach { record ->
+                HomeHistoryItem(record)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
         
         Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+fun HomeHistoryItem(record: FocusRecord) {
+    val dateFormat = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
+    val dateString = record.timestamp?.let { dateFormat.format(it) } ?: ""
+    
+    val minutes = record.durationSeconds / 60
+    val seconds = record.durationSeconds % 60
+    val durationString = stringResource(R.string.duration_format, minutes, seconds)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(12.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                val displayType = when(record.type) {
+                    "工作" -> stringResource(R.string.cat_work)
+                    "學習" -> stringResource(R.string.cat_study)
+                    "運動" -> stringResource(R.string.cat_exercise)
+                    "休息" -> stringResource(R.string.cat_rest)
+                    "閱讀" -> stringResource(R.string.cat_read)
+                    else -> record.type
+                }
+                Text(
+                    text = displayType,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = dateString,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+            Text(
+                text = durationString,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
