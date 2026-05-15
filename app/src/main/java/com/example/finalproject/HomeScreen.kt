@@ -1,5 +1,6 @@
 package com.example.finalproject
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -263,12 +264,7 @@ fun HomeTabContent(userEmail: String) {
                 Text(text = stringResource(R.string.no_data_today), color = Color.Gray)
             }
         } else {
-            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                categoryData.forEach { (category, ratio) ->
-                    CategoryStatsRow(category = category, ratio = ratio)
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-            }
+            CategoryPieChart(categoryData = categoryData)
         }
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -328,6 +324,7 @@ fun HomeHistoryItem(record: FocusRecord) {
                     "運動" -> stringResource(R.string.cat_exercise)
                     "休息" -> stringResource(R.string.cat_rest)
                     "閱讀" -> stringResource(R.string.cat_read)
+                    "冥想" -> stringResource(R.string.cat_meditation)
                     else -> record.type
                 }
                 Text(
@@ -352,31 +349,73 @@ fun HomeHistoryItem(record: FocusRecord) {
 }
 
 @Composable
-fun CategoryStatsRow(category: String, ratio: Float) {
-    val displayType = when(category) {
-        "工作" -> stringResource(R.string.cat_work)
-        "學習" -> stringResource(R.string.cat_study)
-        "運動" -> stringResource(R.string.cat_exercise)
-        "休息" -> stringResource(R.string.cat_rest)
-        "閱讀" -> stringResource(R.string.cat_read)
-        else -> category
-    }
-    
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+fun CategoryPieChart(categoryData: List<Pair<String, Float>>) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Canvas(
+            modifier = Modifier
+                .size(150.dp)
+                .padding(8.dp)
         ) {
-            Text(text = displayType, style = MaterialTheme.typography.bodyMedium)
-            Text(text = "${(ratio * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+            var startAngle = -90f
+            categoryData.forEach { (category, ratio) ->
+                val sweepAngle = ratio * 360f
+                drawArc(
+                    color = getCategoryColor(category),
+                    startAngle = startAngle,
+                    sweepAngle = sweepAngle,
+                    useCenter = true
+                )
+                startAngle += sweepAngle
+            }
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        LinearProgressIndicator(
-            progress = { ratio },
-            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-        )
+
+        Spacer(modifier = Modifier.width(24.dp))
+
+        Column {
+            categoryData.forEach { (category, ratio) ->
+                val displayType = when(category) {
+                    "工作" -> stringResource(R.string.cat_work)
+                    "學習" -> stringResource(R.string.cat_study)
+                    "運動" -> stringResource(R.string.cat_exercise)
+                    "休息" -> stringResource(R.string.cat_rest)
+                    "閱讀" -> stringResource(R.string.cat_read)
+                    "冥想" -> stringResource(R.string.cat_meditation)
+                    else -> category
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(getCategoryColor(category))
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "$displayType: ${(ratio * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
+    }
+}
+
+fun getCategoryColor(category: String): Color {
+    return when (category) {
+        "工作" -> Color(0xFF64B5F6)
+        "學習" -> Color(0xFF81C784)
+        "運動" -> Color(0xFFFFB74D)
+        "休息" -> Color(0xFFBA68C8)
+        "閱讀" -> Color(0xFF4DB6AC)
+        "冥想" -> Color(0xFFF06292)
+        else -> Color(0xFFBDBDBD)
     }
 }
 
