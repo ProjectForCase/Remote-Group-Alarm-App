@@ -70,6 +70,7 @@
     <string name="group_alarm_description">When the time arrives, this will call all %1$d members in this group.</string>
     <string name="repeat_weekdays">Repeat</string>
     <string name="once_alarm">Once</string>
+    <string name="created_by_member">Created by: %1$s</string>
     <string name="next_alarm_time">Next: %1$s</string>
     <string name="call_member_count">Calling %1$d members</string>
     <string name="weekday_monday">Mon</string>

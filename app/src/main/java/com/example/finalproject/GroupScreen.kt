@@ -59,6 +59,8 @@ data class Member(
 
 data class ScheduledGroupAlarm(
     val alarmId: String,
+    val createdBy: String,
+    val senderName: String,
     val groupName: String,
     val hour: Int,
     val minute: Int,
@@ -564,7 +566,7 @@ fun GroupAlarmScreen(group: Group, onBackClick: () -> Unit) {
                     alarms.clear()
                     snapshot?.documents
                         ?.filter { doc ->
-                            doc.getString("createdBy") == uid && doc.getString("status") == "scheduled"
+                            doc.getString("status") == "scheduled"
                         }
                         ?.mapNotNull { doc ->
                             val alarmId = doc.getString("alarmId") ?: doc.id
@@ -579,6 +581,8 @@ fun GroupAlarmScreen(group: Group, onBackClick: () -> Unit) {
                                 .orEmpty()
                             ScheduledGroupAlarm(
                                 alarmId = alarmId,
+                                createdBy = doc.getString("createdBy") ?: "",
+                                senderName = doc.getString("senderName") ?: context.getString(R.string.group_member),
                                 groupName = doc.getString("groupName") ?: group.name,
                                 hour = hour,
                                 minute = minute,
@@ -632,6 +636,7 @@ fun GroupAlarmScreen(group: Group, onBackClick: () -> Unit) {
                         items(alarms, key = { it.alarmId }) { alarm ->
                             GroupAlarmCard(
                                 alarm = alarm,
+                                canDelete = alarm.createdBy == uid,
                                 onDelete = {
                                     cancelGroupAlarm(context, alarm.alarmId)
                                     db.collection("groupAlarms").document(alarm.alarmId)
@@ -662,7 +667,7 @@ fun GroupAlarmScreen(group: Group, onBackClick: () -> Unit) {
 }
 
 @Composable
-fun GroupAlarmCard(alarm: ScheduledGroupAlarm, onDelete: () -> Unit) {
+fun GroupAlarmCard(alarm: ScheduledGroupAlarm, canDelete: Boolean, onDelete: () -> Unit) {
     val timeText = String.format(Locale.getDefault(), "%02d:%02d", alarm.hour, alarm.minute)
     val nextText = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(alarm.scheduledAtMillis))
     val weekdayLabels = mapOf(
@@ -692,11 +697,14 @@ fun GroupAlarmCard(alarm: ScheduledGroupAlarm, onDelete: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(timeText, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
                 Text(repeatText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.created_by_member, alarm.senderName), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Text(stringResource(R.string.next_alarm_time, nextText), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Text(stringResource(R.string.call_member_count, alarm.targetUids.size), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_alarm), tint = MaterialTheme.colorScheme.error)
+            if (canDelete) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_alarm), tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

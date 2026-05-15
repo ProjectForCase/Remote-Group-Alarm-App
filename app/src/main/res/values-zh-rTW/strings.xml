@@ -70,6 +70,7 @@
     <string name="group_alarm_description">到時間後會呼叫此群組全部 %1$d 位成員。</string>
     <string name="repeat_weekdays">重複</string>
     <string name="once_alarm">只響一次</string>
+    <string name="created_by_member">建立者：%1$s</string>
     <string name="next_alarm_time">下次：%1$s</string>
     <string name="call_member_count">呼叫 %1$d 位成員</string>
     <string name="weekday_monday">一</string>
