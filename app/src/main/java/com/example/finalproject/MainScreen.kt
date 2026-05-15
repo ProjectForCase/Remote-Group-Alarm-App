@@ -3,12 +3,9 @@ package com.example.finalproject
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -22,13 +19,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -44,9 +38,12 @@ import android.content.Intent
 import coil.compose.AsyncImage
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Locale
 
 sealed class Screen(val route: String, val titleResId: Int, val icon: ImageVector) {
     object Home : Screen("home_tab", R.string.tab_home, Icons.Default.Home)
@@ -160,156 +157,161 @@ fun MainAppContent(userEmail: String, onLogout: () -> Unit) {
 
 @Composable
 fun FocusTabContent(viewModel: FocusViewModel) {
+    var expanded by remember { mutableStateOf(false) }
     val options = listOf(
-        FocusCategory(R.string.cat_work, "工作", Icons.Default.Assignment),
-        FocusCategory(R.string.cat_read, "閱讀", Icons.Default.MenuBook),
-        FocusCategory(R.string.cat_meditation, "冥想", Icons.Default.SelfImprovement),
-        FocusCategory(R.string.cat_study, "學習", Icons.Default.School),
-        FocusCategory(R.string.cat_exercise, "運動", Icons.Default.FitnessCenter),
-        FocusCategory(R.string.cat_rest, "休息", Icons.Default.Bedtime)
+        R.string.cat_work to "工作",
+        R.string.cat_study to "學習",
+        R.string.cat_exercise to "運動",
+        R.string.cat_rest to "休息",
+        R.string.cat_read to "閱讀"
     )
-    val mainColor = Color(0xFF673AB7) // 紫色基調
+    val mainColor = MaterialTheme.colorScheme.primary
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 32.dp, vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        // 1. 標籤式切換
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                .border(BorderStroke(1.dp, Color.LightGray), RoundedCornerShape(12.dp))
+                .clickable(enabled = !viewModel.isRunning && viewModel.timerSeconds == 0) { expanded = true }
+                .padding(16.dp)
         ) {
-            options.forEach { category ->
-                val isSelected = viewModel.selectedType == category.internalName
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 val isInteractionDisabled = viewModel.isRunning || viewModel.timerSeconds > 0
-                
+                val currentDisplayType = when(viewModel.selectedType) {
+                    "工作" -> stringResource(R.string.cat_work)
+                    "學習" -> stringResource(R.string.cat_study)
+                    "運動" -> stringResource(R.string.cat_exercise)
+                    "休息" -> stringResource(R.string.cat_rest)
+                    "閱讀" -> stringResource(R.string.cat_read)
+                    else -> viewModel.selectedType
+                }
+                Text(
+                    text = currentDisplayType,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isInteractionDisabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.onSurface
+                )
+                Icon(
+                    Icons.Default.ArrowDropDown, 
+                    contentDescription = null, 
+                    tint = if (isInteractionDisabled) Color.Gray.copy(alpha = 0.38f) else Color.Gray
+                )
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { (resId, internalName) ->
+                    DropdownMenuItem(text = { Text(stringResource(resId)) }, onClick = {
+                        viewModel.onTypeChange(internalName)
+                        expanded = false
+                    })
+                }
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = viewModel.formatTime(viewModel.timerSeconds),
+                fontSize = 88.sp,
+                fontWeight = FontWeight.W200,
+                fontFamily = FontFamily.Monospace
+            )
+            Box(modifier = Modifier.width(60.dp).height(2.dp).background(mainColor.copy(alpha = 0.3f)))
+        }
+
+        // 3. 按鈕區域
+        if (viewModel.isRunning) {
+            // 執行中：顯示 STOP 鍵
+            Surface(
+                modifier = Modifier
+                    .size(180.dp)
+                    .clip(CircleShape)
+                    .clickable { viewModel.toggleTimer() },
+                color = Color.Red
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "STOP",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                        color = Color.White
+                    )
+                }
+            }
+        } else if (viewModel.timerSeconds > 0) {
+            // 暫停中：顯示 CONTINUE 與 COMPLETE 鍵
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // CONTINUE 鍵
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable(enabled = !isInteractionDisabled) {
-                            viewModel.onTypeChange(category.internalName)
-                        },
-                    color = if (isSelected) mainColor else Color.Transparent,
-                    border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray),
-                    shape = RoundedCornerShape(24.dp)
+                        .size(120.dp)
+                        .clip(CircleShape)
+                        .clickable { viewModel.startTimer() },
+                    color = mainColor
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = category.icon,
-                            contentDescription = null,
-                            tint = if (isSelected) Color.White else Color.Gray,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Box(contentAlignment = Alignment.Center) {
                         Text(
-                            text = stringResource(category.titleRes),
-                            color = if (isSelected) Color.White else Color.Gray,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            text = "CONTINUE",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                // COMPLETE 鍵
+                Surface(
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(CircleShape)
+                        .clickable { viewModel.completeTimer() },
+                    color = Color.Gray // 使用灰色或另一個顏色區分
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "COMPLETE",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                     }
                 }
             }
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // 2. 圓形計時器區域
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(300.dp)
-        ) {
-            // 背景圓環
-            Canvas(modifier = Modifier.size(280.dp)) {
-                drawCircle(
-                    color = mainColor.copy(alpha = 0.1f),
-                    style = Stroke(width = 8.dp.toPx())
-                )
-            }
-            
-            // 進度圓環
-            Canvas(modifier = Modifier.size(280.dp)) {
-                drawArc(
-                    color = mainColor,
-                    startAngle = -90f,
-                    sweepAngle = 360f * (viewModel.timerSeconds % 60 / 60f), 
-                    useCenter = false,
-                    style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
-                )
-            }
-
-            Text(
-                text = viewModel.formatTime(viewModel.timerSeconds),
-                fontSize = 80.sp,
-                fontWeight = FontWeight.W200,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // 3. 控制按鈕
-        if (viewModel.isRunning) {
-            Button(
-                onClick = { viewModel.toggleTimer() },
-                modifier = Modifier
-                    .width(120.dp)
-                    .height(56.dp),
-                shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f))
-            ) {
-                Text("STOP", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            }
-        } else if (viewModel.timerSeconds > 0) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(
-                    onClick = { viewModel.startTimer() },
-                    shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier.height(56.dp)
-                ) {
-                    Text("CONTINUE")
-                }
-                Button(
-                    onClick = { viewModel.completeTimer() },
-                    shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier.height(56.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
-                ) {
-                    Text("FINISH")
-                }
-            }
         } else {
-            Button(
-                onClick = { viewModel.toggleTimer() },
+            // 未開始：顯示 START 鍵
+            Surface(
                 modifier = Modifier
-                    .width(150.dp)
-                    .height(56.dp),
-                shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = mainColor.copy(alpha = 0.2f), contentColor = mainColor)
+                    .size(180.dp)
+                    .clip(CircleShape)
+                    .clickable { viewModel.toggleTimer() },
+                color = mainColor
             ) {
-                Text("START", fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "START",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                        color = Color.White
+                    )
+                }
             }
         }
-        
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(20.dp))
     }
 }
-
-data class FocusCategory(
-    val titleRes: Int,
-    val internalName: String,
-    val icon: ImageVector
-)
 
 @Composable
 fun HomeTabContent(userEmail: String) {
@@ -323,6 +325,7 @@ fun HomeTabContent(userEmail: String) {
     var weeklyTrends by remember { mutableStateOf(listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)) }
     var weeklyTotalHours by remember { mutableStateOf(0) }
     var categoryData by remember { mutableStateOf<List<Pair<String, Float>>>(emptyList()) }
+    var recentRecords by remember { mutableStateOf<List<DocumentSnapshot>>(emptyList()) }
 
     DisposableEffect(uid) {
         val db = FirebaseFirestore.getInstance()
@@ -418,6 +421,9 @@ fun HomeTabContent(userEmail: String) {
                     } else {
                         emptyList()
                     }
+
+                    // 取得最近 10 筆紀錄
+                    recentRecords = allRecords.sortedByDescending { it.getDate("timestamp") }.take(10)
                 }
         }
 
@@ -528,13 +534,13 @@ fun HomeTabContent(userEmail: String) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(150.dp),
+                    .height(100.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(text = stringResource(R.string.no_data_today), color = Color.Gray)
             }
         } else {
-            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                 categoryData.forEach { (category, ratio) ->
                     CategoryStatsRow(category = category, ratio = ratio)
                     Spacer(modifier = Modifier.height(12.dp))
@@ -542,7 +548,76 @@ fun HomeTabContent(userEmail: String) {
             }
         }
         
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // 5. Focus History
+        Text(
+            text = "專注歷史紀錄",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (recentRecords.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = "尚無專注紀錄", color = Color.Gray)
+            }
+        } else {
+            recentRecords.forEach { doc ->
+                FocusHistoryItem(doc)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+        
         Spacer(modifier = Modifier.height(100.dp))
+    }
+}
+
+@Composable
+fun FocusHistoryItem(doc: DocumentSnapshot) {
+    val type = doc.getString("type") ?: "其他"
+    val seconds = doc.getLong("durationSeconds") ?: 0L
+    val timestamp = doc.getDate("timestamp")
+    
+    val displayType = when(type) {
+        "工作" -> stringResource(R.string.cat_work)
+        "學習" -> stringResource(R.string.cat_study)
+        "運動" -> stringResource(R.string.cat_exercise)
+        "休息" -> stringResource(R.string.cat_rest)
+        "閱讀" -> stringResource(R.string.cat_read)
+        else -> type
+    }
+    
+    val sdf = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
+    val dateStr = if (timestamp != null) sdf.format(timestamp) else ""
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = displayType, fontWeight = FontWeight.Bold)
+                Text(text = dateStr, fontSize = 12.sp, color = Color.Gray)
+            }
+            Text(
+                text = "%d 分 %d 秒".format(seconds / 60, seconds % 60),
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
     }
 }
 
