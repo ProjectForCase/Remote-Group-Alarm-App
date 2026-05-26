@@ -12,4 +12,4 @@ A mobile app that allows users to create and manage group alarms remotely, enabl
 ## Tech Stack
 - Android
 - Kotlin / Java
-- Firebase / Database（如果有用再寫）
+- Firebase / Database
